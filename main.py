@@ -14,7 +14,7 @@ parser.add_argument('--env-name', default='PongDeterministic-v3',
                     metavar='ENV', help='environment')
 parser.add_argument('--lr', type=float, default=0.3, metavar='LR',
                     help='learning rate')
-parser.add_argument('--beta', type=float, default=0.05, metavar='SD',
+parser.add_argument('--beta', type=float, default=0.0, metavar='B',
                     help='momentum rate')
 parser.add_argument('--lr-decay', type=float, default=1, metavar='LRD',
                     help='learning rate decay')

@@ -55,7 +55,7 @@ def do_rollouts(args, models, random_seeds, return_queue, env, are_negative):
 
 def perturb_model(args, model, random_seed, env):
     """
-    Modifies the given model with a pertubation of its parameters,
+    Modifies the given model with a perturbation of its parameters,
     as well as the negative perturbation, and returns both perturbed
     models.
     """
@@ -74,73 +74,81 @@ def perturb_model(args, model, random_seed, env):
     return [new_model, anti_model]
 
 
-def gradient_update(args, synced_model, returns, random_seeds, neg_list,
-                    num_eps, num_frames, chkpt_dir, unperturbed_results):
-    def fitness_shaping(returns):
-        """
-        A rank transformation on the rewards, which reduces the chances
-        of falling into local optima early in training.
-        """
-        sorted_returns_backwards = sorted(returns)[::-1]
-        lamb = len(returns)
-        shaped_returns = []
-        denom = sum([max(0, math.log2(lamb/2 + 1) -
-                         math.log2(sorted_returns_backwards.index(r) + 1))
-                     for r in returns])
-        for r in returns:
-            num = max(0, math.log2(lamb/2 + 1) -
-                      math.log2(sorted_returns_backwards.index(r) + 1))
-            shaped_returns.append(num/denom + 1/lamb)
-        return shaped_returns
+class Optimizer:
+    def __init__(self,args):
+        if args.beta:
+            self.updates = {}
+    
+    def gradient_update(self, args, synced_model, returns, random_seeds, neg_list,
+                        num_eps, num_frames, chkpt_dir, unperturbed_results):
+        def fitness_shaping(returns):
+            """
+            A rank transformation on the rewards, which reduces the chances
+            of falling into local optima early in training.
+            """
+            sorted_returns_backwards = sorted(returns)[::-1]
+            lamb = len(returns)
+            shaped_returns = []
+            denom = sum([max(0, math.log2(lamb/2 + 1) -
+                             math.log2(sorted_returns_backwards.index(r) + 1))
+                         for r in returns])
+            for r in returns:
+                num = max(0, math.log2(lamb/2 + 1) -
+                          math.log2(sorted_returns_backwards.index(r) + 1))
+                shaped_returns.append(num/denom + 1/lamb)
+            return shaped_returns
 
-    def unperturbed_rank(returns, unperturbed_results):
-        nth_place = 1
-        for r in returns:
-            if r > unperturbed_results:
-                nth_place += 1
-        rank_diag = ('%d out of %d (1 means gradient '
-                     'is uninformative)' % (nth_place,
-                                             len(returns) + 1))
-        return rank_diag, nth_place
+        def unperturbed_rank(returns, unperturbed_results):
+            nth_place = 1
+            for r in returns:
+                if r > unperturbed_results:
+                    nth_place += 1
+            rank_diag = ('%d out of %d (1 means gradient '
+                         'is uninformative)' % (nth_place,
+                                                 len(returns) + 1))
+            return rank_diag, nth_place
 
-    batch_size = len(returns)
-    assert batch_size == args.n
-    assert len(random_seeds) == batch_size
-    shaped_returns = fitness_shaping(returns)
-    rank_diag, rank = unperturbed_rank(returns, unperturbed_results)
-    if not args.silent:
-        print('Episode num: %d\n'
-              'Average reward: %f\n'
-              'Variance in rewards: %f\n'
-              'Max reward: %f\n'
-              'Min reward: %f\n'
-              'Batch size: %d\n'
-              'Max episode length: %d\n'
-              'Sigma: %f\n'
-              'Learning rate: %f\n'
-              'Total num frames seen: %d\n'
-              'Unperturbed reward: %f\n'
-              'Unperturbed rank: %s\n\n' %
-              (num_eps, np.mean(returns), np.var(returns), max(returns),
-               min(returns), batch_size,
-               args.max_episode_length, args.sigma, args.lr, num_frames,
-               unperturbed_results, rank_diag))
-    # For each model, generate the same random numbers as we did
-    # before, and update parameters. We apply weight decay once.
-    for i in range(args.n):
-        np.random.seed(random_seeds[i])
-        multiplier = -1 if neg_list[i] else 1
-        reward = shaped_returns[i]
+        batch_size = len(returns)
+        assert batch_size == args.n
+        assert len(random_seeds) == batch_size
+        shaped_returns = fitness_shaping(returns)
+        rank_diag, rank = unperturbed_rank(returns, unperturbed_results)
+        if not args.silent:
+            print('Episode num: %d\n'
+                  'Average reward: %f\n'
+                  'Variance in rewards: %f\n'
+                  'Max reward: %f\n'
+                  'Min reward: %f\n'
+                  'Batch size: %d\n'
+                  'Max episode length: %d\n'
+                  'Sigma: %f\n'
+                  'Learning rate: %f\n'
+                  'Total num frames seen: %d\n'
+                  'Unperturbed reward: %f\n'
+                  'Unperturbed rank: %s\n\n' %
+                  (num_eps, np.mean(returns), np.var(returns), max(returns),
+                   min(returns), batch_size,
+                   args.max_episode_length, args.sigma, args.lr, num_frames,
+                   unperturbed_results, rank_diag))
+        # For each model, generate the same random numbers as we did
+        # before, and update parameters. We apply weight decay once.
+        for i in range(args.n):
+            np.random.seed(random_seeds[i])
+            multiplier = -1 if neg_list[i] else 1
+            reward = shaped_returns[i]
+            for k, v in synced_model.es_params():
+                eps = np.random.normal(0, 1, v.size())
+                update = args.lr/(args.n*args.sigma) * (reward*multiplier*eps)
+                if args.beta:
+                    update += args.beta*self.updates.get((i,k),0.0)
+                    self.updates[(i,k)] = update
+                v += torch.from_numpy(update).float()
         for k, v in synced_model.es_params():
-            eps = np.random.normal(0, 1, v.size())
-            v += torch.from_numpy(args.lr/(args.n*args.sigma) *
-                                  (reward*multiplier*eps)).float()
-    for k, v in synced_model.es_params():
-        v *= args.wd
-    args.lr *= args.lr_decay
-    torch.save(synced_model.state_dict(),
-               os.path.join(chkpt_dir, 'latest.pth'))
-    return synced_model
+            v *= args.wd
+        args.lr *= args.lr_decay
+        torch.save(synced_model.state_dict(),
+                   os.path.join(chkpt_dir, 'latest.pth'))
+        return synced_model
 
 
 def render_env(args, model, env):
@@ -188,6 +196,7 @@ def train_loop(args, synced_model, env, chkpt_dir):
     print("Num params in network %d" % synced_model.count_parameters())
     num_eps = 0
     total_num_frames = 0
+    opt = Optimizer(args)
     for _ in range(args.max_gradient_updates):
         processes = []
         return_queue = mp.Queue()
@@ -240,7 +249,7 @@ def train_loop(args, synced_model, env, chkpt_dir):
 
         total_num_frames += sum(num_frames)
         num_eps += len(results)
-        synced_model = gradient_update(args, synced_model, results, seeds,
+        synced_model = opt.gradient_update(args, synced_model, results, seeds,
                                        neg_list, num_eps, total_num_frames,
                                        chkpt_dir, unperturbed_results)
         if args.variable_ep_len:
