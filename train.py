@@ -3,6 +3,7 @@ from __future__ import absolute_import, division, print_function
 import os
 import math
 import numpy as np
+from time import time
 
 import torch
 import torch.nn.functional as F
@@ -22,31 +23,36 @@ def do_rollouts(args, models, random_seeds, return_queue, env, are_negative):
     all_returns = []
     all_num_frames = []
     for model in models:
-        if not args.small_net:
-            cx = Variable(torch.zeros(1, 256))
-            hx = Variable(torch.zeros(1, 256))
+        if args.gpu: model = model.cuda()
+        if not args.small_net and args.lstm:
+            cx, hx = torch.zeros(1, 256), torch.zeros(1, 256)
+            if args.gpu: cx, hx = cx.cuda(), hx.cuda()
+            cx, hx = Variable(cx), Variable(hx)
         state = env.reset()
         state = torch.from_numpy(state)
         this_model_return = 0
         this_model_num_frames = 0
         # Rollout
         for step in range(args.max_episode_length):
+            if args.gpu: state = state.cuda()
             if args.small_net:
                 state = state.float()
                 state = state.view(1, env.observation_space.shape[0])
                 logit = model(Variable(state, volatile=True))
-            else:
+            elif args.lstm:
                 logit, (hx, cx) = model(
                     (Variable(state.unsqueeze(0), volatile=True),
                      (hx, cx)))
+            else:
+                logit = model(Variable(state.unsqueeze(0), volatile=True))
 
             prob = F.softmax(logit)
+            if args.gpu: prob = prob.cpu()
             action = prob.max(1)[1].data.numpy()
             state, reward, done, _ = env.step(action[0, 0])
             this_model_return += reward
             this_model_num_frames += 1
-            if done:
-                break
+            if done: break
             state = torch.from_numpy(state)
         all_returns.append(this_model_return)
         all_num_frames.append(this_model_num_frames)
@@ -60,9 +66,9 @@ def perturb_model(args, model, random_seed, env):
     models.
     """
     new_model = ES(env.observation_space.shape[0],
-                   env.action_space, args.small_net)
+                   env.action_space, args.small_net, args.lstm)
     anti_model = ES(env.observation_space.shape[0],
-                    env.action_space, args.small_net)
+                    env.action_space, args.small_net, args.lstm)
     new_model.load_state_dict(model.state_dict())
     anti_model.load_state_dict(model.state_dict())
     np.random.seed(random_seed)
@@ -80,7 +86,7 @@ class Optimizer:
             self.updates = {}
     
     def gradient_update(self, args, synced_model, returns, random_seeds, neg_list,
-                        num_eps, num_frames, chkpt_dir, unperturbed_results):
+                        num_eps, num_frames, chkpt_dir, unperturbed_results, start_time):
         def fitness_shaping(returns):
             """
             A rank transformation on the rewards, which reduces the chances
@@ -115,6 +121,7 @@ class Optimizer:
         rank_diag, rank = unperturbed_rank(returns, unperturbed_results)
         if not args.silent:
             print('Episode num: %d\n'
+                  'Elapsed time (sec): %.1f\n'
                   'Average reward: %f\n'
                   'Variance in rewards: %f\n'
                   'Max reward: %f\n'
@@ -126,8 +133,8 @@ class Optimizer:
                   'Total num frames seen: %d\n'
                   'Unperturbed reward: %f\n'
                   'Unperturbed rank: %s\n\n' %
-                  (num_eps, np.mean(returns), np.var(returns), max(returns),
-                   min(returns), batch_size,
+                  (num_eps, time()-start_time, np.mean(returns), np.var(returns),
+                   max(returns), min(returns), batch_size,
                    args.max_episode_length, args.sigma, args.lr, num_frames,
                    unperturbed_results, rank_diag))
         # For each model, generate the same random numbers as we did
@@ -198,9 +205,10 @@ def train_loop(args, synced_model, env, chkpt_dir):
     total_num_frames = 0
     opt = Optimizer(args)
     for _ in range(args.max_gradient_updates):
+        start_time = time()
         processes = []
         return_queue = mp.Queue()
-        all_seeds, all_models = [], []
+        all_seeds, all_models, all_are_negative = [], [], []
         # Generate a perturbation and its antithesis
         for j in range(int(args.n/2)):
             random_seed, two_models = generate_seeds_and_models(args,
@@ -210,23 +218,22 @@ def train_loop(args, synced_model, env, chkpt_dir):
             all_seeds.append(random_seed)
             all_seeds.append(random_seed)
             all_models += two_models
+            all_are_negative += [False,True]
         assert len(all_seeds) == len(all_models)
-        # Keep track of which perturbations were positive and negative
-        # Start with negative true because pop() makes us go backwards
-        is_negative = True
+        
         # Add all peturbed models to the queue
         while all_models:
-            perturbed_model = all_models.pop()
-            seed = all_seeds.pop()
+            perturbed_models = [all_models.pop() for _ in range(args.models_per_thread)]
+            seeds = [all_seeds.pop() for _ in range(args.models_per_thread)]
+            are_negative = [all_are_negative.pop() for _ in range(args.models_per_thread)]
             p = mp.Process(target=do_rollouts, args=(args,
-                                                     [perturbed_model],
-                                                     [seed],
+                                                     perturbed_models,
+                                                     seeds,
                                                      return_queue,
                                                      env,
-                                                     [is_negative]))
+                                                     are_negative))
             p.start()
             processes.append(p)
-            is_negative = not is_negative
         assert len(all_seeds) == 0
         # Evaluate the unperturbed model as well
         p = mp.Process(target=do_rollouts, args=(args, [synced_model],
@@ -251,6 +258,6 @@ def train_loop(args, synced_model, env, chkpt_dir):
         num_eps += len(results)
         synced_model = opt.gradient_update(args, synced_model, results, seeds,
                                        neg_list, num_eps, total_num_frames,
-                                       chkpt_dir, unperturbed_results)
+                                       chkpt_dir, unperturbed_results, start_time)
         if args.variable_ep_len:
             args.max_episode_length = int(2*sum(num_frames)/len(num_frames))

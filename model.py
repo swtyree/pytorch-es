@@ -37,13 +37,14 @@ def weights_init(m):
 
 class ES(torch.nn.Module):
 
-    def __init__(self, num_inputs, action_space, small_net=False):
+    def __init__(self, num_inputs, action_space, small_net=False, use_lstm=False):
         """
         Really I should be using inheritance for the small_net here
         """
         super(ES, self).__init__()
         num_outputs = action_space.n
         self.small_net = small_net
+        self.use_lstm = use_lstm
         if self.small_net:
             self.linear1 = nn.Linear(num_inputs, 64)
             self.linear2 = nn.Linear(64, 64)
@@ -53,7 +54,10 @@ class ES(torch.nn.Module):
             self.conv2 = nn.Conv2d(32, 32, 3, stride=2, padding=1)
             self.conv3 = nn.Conv2d(32, 32, 3, stride=2, padding=1)
             self.conv4 = nn.Conv2d(32, 32, 3, stride=2, padding=1)
-            self.lstm = nn.LSTMCell(32*3*3, 256)
+            if self.use_lstm:
+                self.lstm = nn.LSTMCell(32*3*3, 256)
+            else:
+                self.fc = nn.Linear(32*3*3, 256)
             self.actor_linear = nn.Linear(256, num_outputs)
         self.train()
 
@@ -63,15 +67,20 @@ class ES(torch.nn.Module):
             x = F.elu(self.linear2(x))
             return self.actor_linear(x)
         else:
-            inputs, (hx, cx) = inputs
+            if self.use_lstm:
+                inputs, (hx, cx) = inputs
             x = F.elu(self.conv1(inputs))
             x = F.elu(self.conv2(x))
             x = F.elu(self.conv3(x))
             x = F.elu(self.conv4(x))
             x = x.view(-1, 32*3*3)
-            hx, cx = self.lstm(x, (hx, cx))
-            x = hx
-            return self.actor_linear(x), (hx, cx)
+            if self.use_lstm:
+                hx, cx = self.lstm(x, (hx, cx))
+                x = hx
+                return self.actor_linear(x), (hx, cx)
+            else:
+                x = self.fc(x)
+                return self.actor_linear(x)
 
     def count_parameters(self):
         count = 0

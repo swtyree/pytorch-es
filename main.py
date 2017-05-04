@@ -32,12 +32,18 @@ parser.add_argument('--restore', default='', metavar='RES',
                     help='checkpoint from which to restore')
 parser.add_argument('--small-net', action='store_true',
                     help='Use simple MLP on CartPole')
+parser.add_argument('--lstm', action='store_true',
+                    help='Use LSTM')
 parser.add_argument('--variable-ep-len', action='store_true',
                     help="Change max episode length during training")
 parser.add_argument('--silent', action='store_true',
                     help='Silence print statements during training')
 parser.add_argument('--test', action='store_true',
                     help='Just render the env, no training')
+parser.add_argument('--gpu', action='store_true',
+                    help='Use GPU')
+parser.add_argument('--models-per-thread', type=int, default=1, metavar='M',
+                    help='models evaluated by each thread')
 
 
 if __name__ == '__main__':
@@ -53,7 +59,7 @@ if __name__ == '__main__':
     if not os.path.exists(chkpt_dir):
         os.makedirs(chkpt_dir)
     synced_model = ES(env.observation_space.shape[0],
-                      env.action_space, args.small_net)
+                      env.action_space, args.small_net, args.lstm)
     for param in synced_model.parameters():
         param.requires_grad = False
     if args.restore:
