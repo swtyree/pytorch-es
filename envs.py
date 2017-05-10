@@ -12,13 +12,17 @@ import cv2
 
 
 # Taken from https://github.com/openai/universe-starter-agent
-def create_atari_env(env_id):
+def create_atari_env(env_id, frame_stack_size=1, noop_init=0):
     env = gym.make(env_id)
     if len(env.observation_space.shape) > 1:
         print('Preprocessing env')
         env = Vectorize(env)
         env = AtariRescale42x42(env)
         env = NormalizedEnv(env)
+        if frame_stack_size > 1:
+            env = Stack(env, frame_stack_size=frame_stack_size)
+        if noop_init > 0:
+            env = NoopInit(env, max_n_noops=noop_init)
         env = Unvectorize(env)
     else:
         print('No preprocessing because env is too small')
@@ -72,3 +76,37 @@ class NormalizedEnv(vectorized.ObservationWrapper):
 
         return [(observation - unbiased_mean) / (unbiased_std + 1e-8)
                 for observation in observation_n]
+
+
+class Stack(vectorized.ObservationWrapper):
+
+    def __init__(self, env=None, frame_stack_size=1):
+        super(Stack, self).__init__(env)
+        self.frame_stack_size = frame_stack_size
+        self.previous_stack = None
+    
+    def _reset(self):
+        self.previous_stack = None
+        return super(Stack, self)._reset()
+
+    def _observation(self, observation_n):
+        if self.previous_stack is None:
+            self.previous_stack = observation_n * self.frame_stack_size
+        self.previous_stack = (self.previous_stack + observation_n)[-self.frame_stack_size:]
+        return [np.vstack(self.previous_stack)]
+
+
+class NoopInit(vectorized.ObservationWrapper):
+
+    def __init__(self, env=None, max_n_noops=30):
+        super(NoopInit, self).__init__(env)
+        self.max_n_noops = max_n_noops
+    
+    def _reset(self):
+        state = super(NoopInit, self)._reset()
+        for _ in range(np.random.randint(self.max_n_noops+1)):
+            state,_,_,_ = self.step([0])
+        return state
+    
+    def _observation(self, observation_n):
+        return observation_n

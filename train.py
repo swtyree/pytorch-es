@@ -14,7 +14,13 @@ from envs import create_atari_env
 from model import ES
 
 
-def do_rollouts(args, models, random_seeds, return_queue, env, are_negative):
+def torchify(x, unsqueeze=True):
+    x = torch.from_numpy(x.astype('float32'))
+    if unsqueeze:
+        x = x.unsqueeze(0)
+    return Variable(x, volatile=True)
+
+def do_rollouts(args, models, random_seeds, return_queue, envs, are_negative, virtual_batch):
     """
     For each model, do a rollout. Supports multiple models per thread but
     don't do it -- it's inefficient (it's mostly a relic of when I would run
@@ -22,12 +28,15 @@ def do_rollouts(args, models, random_seeds, return_queue, env, are_negative):
     """
     all_returns = []
     all_num_frames = []
-    for model in models:
+    for model,env in zip(models,envs):
         if args.gpu: model = model.cuda()
+        if args.virtual_batch_norm:
+            model.init_virtual_batch_norm(
+                Variable(torch.from_numpy(virtual_batch), volatile=True))
         if not args.small_net and args.lstm:
             cx, hx = torch.zeros(1, 256), torch.zeros(1, 256)
             if args.gpu: cx, hx = cx.cuda(), hx.cuda()
-            cx, hx = Variable(cx), Variable(hx)
+            cx, hx = Variable(cx, volatile=True), Variable(hx, volatile=True)
         state = env.reset()
         state = torch.from_numpy(state)
         this_model_return = 0
@@ -38,15 +47,14 @@ def do_rollouts(args, models, random_seeds, return_queue, env, are_negative):
             if args.small_net:
                 state = state.float()
                 state = state.view(1, env.observation_space.shape[0])
-                logit = model(Variable(state, volatile=True))
+                prob = model(Variable(state, volatile=True))
             elif args.lstm:
-                logit, (hx, cx) = model(
+                prob, (hx, cx) = model(
                     (Variable(state.unsqueeze(0), volatile=True),
                      (hx, cx)))
             else:
-                logit = model(Variable(state.unsqueeze(0), volatile=True))
+                prob = model(Variable(state.unsqueeze(0), volatile=True))
 
-            prob = F.softmax(logit)
             if args.gpu: prob = prob.cpu()
             action = prob.max(1)[1].data.numpy()
             state, reward, done, _ = env.step(action[0, 0])
@@ -65,10 +73,12 @@ def perturb_model(args, model, random_seed, env):
     as well as the negative perturbation, and returns both perturbed
     models.
     """
-    new_model = ES(env.observation_space.shape[0],
-                   env.action_space, args.small_net, args.lstm)
-    anti_model = ES(env.observation_space.shape[0],
-                    env.action_space, args.small_net, args.lstm)
+    new_model = ES(env.observation_space.shape[0],env.action_space,
+                    small_net=args.small_net,use_lstm=args.lstm, use_a3c_net=args.a3c_net,
+                    use_virtual_batch_norm=args.virtual_batch_norm)
+    anti_model = ES(env.observation_space.shape[0],env.action_space,
+                    small_net=args.small_net,use_lstm=args.lstm, use_a3c_net=args.a3c_net,
+                    use_virtual_batch_norm=args.virtual_batch_norm)
     new_model.load_state_dict(model.state_dict())
     anti_model.load_state_dict(model.state_dict())
     np.random.seed(random_seed)
@@ -164,20 +174,19 @@ def render_env(args, model, env):
         state = torch.from_numpy(state)
         this_model_return = 0
         if not args.small_net:
-            cx = Variable(torch.zeros(1, 256))
-            hx = Variable(torch.zeros(1, 256))
+            cx = Variable(torch.zeros(1, 256), volatile=True)
+            hx = Variable(torch.zeros(1, 256), volatile=True)
         done = False
         while not done:
             if args.small_net:
                 state = state.float()
                 state = state.view(1, env.observation_space.shape[0])
-                logit = model(Variable(state, volatile=True))
+                prob = model(Variable(state, volatile=True))
             else:
-                logit, (hx, cx) = model(
+                prob, (hx, cx) = model(
                     (Variable(state.unsqueeze(0), volatile=True),
                      (hx, cx)))
 
-            prob = F.softmax(logit)
             action = prob.max(1)[1].data.numpy()
             state, reward, done, _ = env.step(action[0, 0])
             env.render()
@@ -196,7 +205,24 @@ def generate_seeds_and_models(args, synced_model, env):
     return random_seed, two_models
 
 
-def train_loop(args, synced_model, env, chkpt_dir):
+def gather_for_virtual_batch_norm(env, batch_size=100, skip_steps=100, seed=409):
+    """
+    Gather a set of frames for virtual batch normalization.
+    """
+    np.random.seed(seed)
+    env.seed(seed)
+    env.reset()
+    virtual_batch = []
+    for _ in range(batch_size):
+        for _ in range(skip_steps):
+            action = np.random.randint(env.action_space.n)
+            state,_,done,_ = env.step(action)
+            if done: env.reset()
+        virtual_batch += [state]
+    return np.stack(virtual_batch)
+
+
+def train_loop(args, synced_model, env, chkpt_dir, virtual_batch=None):
     def flatten(raw_results, index):
         notflat_results = [result[index] for result in raw_results]
         return [item for sublist in notflat_results for item in sublist]
@@ -204,11 +230,13 @@ def train_loop(args, synced_model, env, chkpt_dir):
     num_eps = 0
     total_num_frames = 0
     opt = Optimizer(args)
+    init_envs = [create_atari_env(args.env_name, frame_stack_size=args.stack_images, noop_init=args.noop_init) 
+                for _ in range(args.n+1)]
     for _ in range(args.max_gradient_updates):
         start_time = time()
         processes = []
         return_queue = mp.Queue()
-        all_seeds, all_models, all_are_negative = [], [], []
+        all_seeds, all_models, all_are_negative, all_envs = [], [], [], []
         # Generate a perturbation and its antithesis
         for j in range(int(args.n/2)):
             random_seed, two_models = generate_seeds_and_models(args,
@@ -219,27 +247,32 @@ def train_loop(args, synced_model, env, chkpt_dir):
             all_seeds.append(random_seed)
             all_models += two_models
             all_are_negative += [False,True]
+            all_envs.append(init_envs[j*2])
+            all_envs.append(init_envs[j*2+1])
         assert len(all_seeds) == len(all_models)
         
         # Add all peturbed models to the queue
         while all_models:
             perturbed_models = [all_models.pop() for _ in range(args.models_per_thread)]
             seeds = [all_seeds.pop() for _ in range(args.models_per_thread)]
+            envs = [all_envs.pop() for _ in range(args.models_per_thread)]
             are_negative = [all_are_negative.pop() for _ in range(args.models_per_thread)]
             p = mp.Process(target=do_rollouts, args=(args,
                                                      perturbed_models,
                                                      seeds,
                                                      return_queue,
-                                                     env,
-                                                     are_negative))
+                                                     envs,
+                                                     are_negative,
+                                                     virtual_batch))
             p.start()
             processes.append(p)
         assert len(all_seeds) == 0
         # Evaluate the unperturbed model as well
         p = mp.Process(target=do_rollouts, args=(args, [synced_model],
                                                  ['dummy_seed'],
-                                                 return_queue, env,
-                                                 ['dummy_neg']))
+                                                 return_queue, envs[-1:],
+                                                 ['dummy_neg'],
+                                                 virtual_batch))
         p.start()
         processes.append(p)
         for p in processes:
