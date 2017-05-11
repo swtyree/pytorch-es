@@ -80,8 +80,7 @@ if __name__ == '__main__':
     if args.virtual_batch_norm:
         print('Computing batch for virtual batch normalization')
         virtual_batch = gather_for_virtual_batch_norm(env)
-        virtual_batch = torchify(virtual_batch, unsqueeze=False)
-        if args.cuda: virtual_batch = virtual_batch.cuda()
+        virtual_batch = torchify(virtual_batch, unsqueeze=False, gpu=args.gpu)
     else:
         virtual_batch = None
 

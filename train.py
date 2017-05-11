@@ -14,10 +14,12 @@ from envs import create_atari_env
 from model import ES
 
 
-def torchify(x, unsqueeze=True):
+def torchify(x, unsqueeze=True, gpu=False):
     x = torch.from_numpy(x.astype('float32'))
     if unsqueeze:
         x = x.unsqueeze(0)
+    if gpu:
+        x = x.cuda()
     return Variable(x, volatile=True)
 
 def do_rollouts(args, models, random_seeds, return_queue, envs, are_negative, virtual_batch):
