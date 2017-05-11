@@ -31,8 +31,7 @@ def do_rollouts(args, models, random_seeds, return_queue, envs, are_negative, vi
     for model,env in zip(models,envs):
         if args.gpu: model = model.cuda()
         if args.virtual_batch_norm:
-            model.init_virtual_batch_norm(
-                Variable(torch.from_numpy(virtual_batch), volatile=True))
+            model.init_virtual_batch_norm(virtual_batch)
         if not args.small_net and args.lstm:
             cx, hx = torch.zeros(1, 256), torch.zeros(1, 256)
             if args.gpu: cx, hx = cx.cuda(), hx.cuda()

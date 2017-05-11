@@ -9,7 +9,7 @@ import torch
 
 from envs import create_atari_env
 from model import ES
-from train import train_loop, render_env, gather_for_virtual_batch_norm
+from train import train_loop, render_env, gather_for_virtual_batch_norm, torchify
 
 parser = argparse.ArgumentParser(description='ES')
 parser.add_argument('--env-name', default='PongDeterministic-v3',
@@ -80,6 +80,8 @@ if __name__ == '__main__':
     if args.virtual_batch_norm:
         print('Computing batch for virtual batch normalization')
         virtual_batch = gather_for_virtual_batch_norm(env)
+        virtual_batch = torchify(virtual_batch, unsqueeze=False)
+        if args.cuda: virtual_batch = virtual_batch.cuda()
     else:
         virtual_batch = None
 
