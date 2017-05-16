@@ -99,6 +99,26 @@ class Optimizer:
     
     def gradient_update(self, args, synced_model, returns, random_seeds, neg_list,
                         num_eps, num_frames, chkpt_dir, unperturbed_results, start_time):
+        # from: https://github.com/openai/evolution-strategies-starter/blob/7585f01cc64890aefbbf3cccda326e2ca90ba6f8/es_distributed/es.py#L69
+        def compute_ranks(x):
+            """
+            Returns ranks in [0, len(x))
+            Note: This is different from scipy.stats.rankdata, which returns ranks in [1, len(x)].
+            """
+            assert x.ndim == 1
+            ranks = np.empty(len(x), dtype=int)
+            ranks[x.argsort(kind='mergesort')] = np.arange(len(x))
+            return ranks
+        
+        def compute_centered_ranks(x):
+            """
+            Assume x is kx2 with a column for positive and a column for negative
+            """
+            y = compute_ranks(x.ravel()).reshape(x.shape).astype(np.float32)
+            y /= (x.size - 1)
+            y -= .5
+            return y
+        
         def fitness_shaping(returns):
             """
             A rank transformation on the rewards, which reduces the chances
@@ -129,7 +149,12 @@ class Optimizer:
         batch_size = len(returns)
         assert batch_size == args.n
         assert len(random_seeds) == batch_size
-        shaped_returns = fitness_shaping(returns)
+        
+        # Compute rank transform
+        # shaped_returns = fitness_shaping(returns)
+        shaped_returns = list(compute_centered_ranks(np.asarray(returns).reshape(-1,2)).flatten())
+        
+        # Print diagnostic info
         rank_diag, rank = unperturbed_rank(returns, unperturbed_results)
         if not args.silent:
             print('Episode num: %d\n'
@@ -149,6 +174,7 @@ class Optimizer:
                    max(returns), min(returns), batch_size,
                    args.max_episode_length, args.sigma, args.lr, num_frames,
                    unperturbed_results, rank_diag))
+        
         # For each model, generate the same random numbers as we did
         # before, and update parameters. We apply weight decay once.
         for i in range(args.n):
@@ -280,14 +306,20 @@ def train_loop(args, synced_model, env, chkpt_dir, virtual_batch=None):
         for p in processes:
             p.join()
         raw_results = [return_queue.get() for p in processes]
+        print(raw_results)
         seeds, results, num_frames, neg_list = [flatten(raw_results, index)
                                                 for index in [0, 1, 2, 3]]
+        
         # Separate the unperturbed results from the perturbed results
         _ = unperturbed_index = seeds.index('dummy_seed')
         seeds.pop(unperturbed_index)
         unperturbed_results = results.pop(unperturbed_index)
         _ = num_frames.pop(unperturbed_index)
         _ = neg_list.pop(unperturbed_index)
+        
+        # Reorder results by seed and is_negative
+        sorted_results = sorted([a for a in zip(seeds,neg_list,results,num_frames)])
+        seeds, neg_list, results, num_frames = [[x[i] for x in sorted_results] for i in range(4)]
 
         total_num_frames += sum(num_frames)
         num_eps += len(results)
