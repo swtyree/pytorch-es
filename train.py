@@ -169,7 +169,7 @@ class Optimizer:
         total_change = sum([abs(v) for v in consolidated_seeds.values()])
         # print('total_change',total_change)
         rescale_factor = 1.0
-        if total_change>0.0: rescale_factor = 1./total_change
+        # if total_change>0.0: rescale_factor = 1./total_change
         # print('rescale_factor',rescale_factor)
         # print(shaped_returns)
         # print(consolidated_seeds)
