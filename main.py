@@ -36,8 +36,6 @@ parser.add_argument('--restore', default='', metavar='RES',
                     help='checkpoint from which to restore')
 parser.add_argument('--small-net', action='store_true',
                     help='use simple MLP on CartPole')
-parser.add_argument('--lstm', action='store_true',
-                    help='use LSTM')
 parser.add_argument('--a3c-net', action='store_true',
                     help='use A3C network')
 parser.add_argument('--stack-images', type=int, default=1, metavar='S',
@@ -59,18 +57,13 @@ parser.add_argument('--models-per-thread', type=int, default=1, metavar='M',
 if __name__ == '__main__':
     args = parser.parse_args()
     assert args.n % 2 == 0
-    if args.small_net and args.env_name not in ['CartPole-v0', 'CartPole-v1',
-                                                'MountainCar-v0']:
-        args.env_name = 'CartPole-v1'
-        print('Switching env to CartPole')
-
+    
     env = create_atari_env(args.env_name, frame_stack_size=args.stack_images, noop_init=args.noop_init)
     chkpt_dir = 'checkpoints/%s/' % args.env_name
     if not os.path.exists(chkpt_dir):
         os.makedirs(chkpt_dir)
     synced_model = ES(env.observation_space.shape[0], env.action_space,
-        small_net=args.small_net, use_lstm=args.lstm, use_a3c_net=args.a3c_net,
-        use_virtual_batch_norm=args.virtual_batch_norm)
+        use_a3c_net=args.a3c_net, use_virtual_batch_norm=args.virtual_batch_norm)
     for param in synced_model.parameters():
         param.requires_grad = False
     if args.restore:

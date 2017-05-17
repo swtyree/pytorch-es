@@ -35,10 +35,6 @@ def do_rollouts(args, models, random_seeds, return_queue, envs, are_negative, vi
         if args.virtual_batch_norm:
             if args.gpu: virtual_batch = virtual_batch.cuda()
             model.init_virtual_batch_norm(virtual_batch)
-        if not args.small_net and args.lstm:
-            cx, hx = torch.zeros(1, 256), torch.zeros(1, 256)
-            if args.gpu: cx, hx = cx.cuda(), hx.cuda()
-            cx, hx = Variable(cx, volatile=True), Variable(hx, volatile=True)
         state = env.reset()
         state = torch.from_numpy(state)
         this_model_return = 0
@@ -46,16 +42,7 @@ def do_rollouts(args, models, random_seeds, return_queue, envs, are_negative, vi
         # Rollout
         for step in range(args.max_episode_length):
             if args.gpu: state = state.cuda()
-            if args.small_net:
-                state = state.float()
-                state = state.view(1, env.observation_space.shape[0])
-                prob = model(Variable(state, volatile=True))
-            elif args.lstm:
-                prob, (hx, cx) = model(
-                    (Variable(state.unsqueeze(0), volatile=True),
-                     (hx, cx)))
-            else:
-                prob = model(Variable(state.unsqueeze(0), volatile=True))
+            prob = model(Variable(state.unsqueeze(0), volatile=True))
 
             if args.gpu: prob = prob.cpu()
             action = prob.max(1)[1].data.numpy()
@@ -76,11 +63,9 @@ def perturb_model(args, model, random_seed, env):
     models.
     """
     new_model = ES(env.observation_space.shape[0],env.action_space,
-                    small_net=args.small_net,use_lstm=args.lstm, use_a3c_net=args.a3c_net,
-                    use_virtual_batch_norm=args.virtual_batch_norm)
+                    use_a3c_net=args.a3c_net, use_virtual_batch_norm=args.virtual_batch_norm)
     anti_model = ES(env.observation_space.shape[0],env.action_space,
-                    small_net=args.small_net,use_lstm=args.lstm, use_a3c_net=args.a3c_net,
-                    use_virtual_batch_norm=args.virtual_batch_norm)
+                    use_a3c_net=args.a3c_net, use_virtual_batch_norm=args.virtual_batch_norm)
     new_model.load_state_dict(model.state_dict())
     anti_model.load_state_dict(model.state_dict())
     np.random.seed(random_seed)
@@ -151,9 +136,11 @@ class Optimizer:
         assert len(random_seeds) == batch_size
         
         # Compute rank transform
-        # shaped_returns = fitness_shaping(returns)
-        shaped_returns = list(compute_centered_ranks(np.asarray(returns).reshape(-1,2)).flatten())
-        
+        shaped_returns = fitness_shaping(returns)
+        # shaped_returns2 = list(compute_centered_ranks(np.asarray(returns).reshape(-1,2)).flatten())
+        # for o in zip(returns,shaped_returns,shaped_returns2,random_seeds,neg_list):
+            # print(o)
+
         # Print diagnostic info
         rank_diag, rank = unperturbed_rank(returns, unperturbed_results)
         if not args.silent:
@@ -175,15 +162,27 @@ class Optimizer:
                    args.max_episode_length, args.sigma, args.lr, num_frames,
                    unperturbed_results, rank_diag))
         
+        # Consolidate updates
+        consolidated_seeds = {}
+        for seed,neg,shaped_return in zip(random_seeds,neg_list,shaped_returns):
+            consolidated_seeds[seed] = consolidated_seeds.get(seed,0.) + (-1)**neg*shaped_return
+        total_change = sum([abs(v) for v in consolidated_seeds.values()])
+        print('total_change',total_change)
+        rescale_factor = 1.0
+        if total_change>0.0: rescale_factor = 1./total_change
+        print('rescale_factor',rescale_factor)
+        print(shaped_returns)
+        print(consolidated_seeds)
+        
         # For each model, generate the same random numbers as we did
         # before, and update parameters. We apply weight decay once.
-        for i in range(args.n):
-            np.random.seed(random_seeds[i])
-            multiplier = -1 if neg_list[i] else 1
-            reward = shaped_returns[i]
+        for seed,weight in consolidated_seeds.items():
+            print(seed,weight,weight==0.0)
+            if weight == 0.0: continue
+            np.random.seed(seed)
             for k, v in synced_model.es_params():
                 eps = np.random.normal(0, 1, v.size())
-                update = args.lr/(args.n*args.sigma) * (reward*multiplier*eps)
+                update = args.lr/(args.n*args.sigma) * (weight * rescale_factor * eps)
                 if args.beta:
                     update += args.beta*self.updates.get((i,k),0.0)
                     self.updates[(i,k)] = update
@@ -201,19 +200,10 @@ def render_env(args, model, env):
         state = env.reset()
         state = torch.from_numpy(state)
         this_model_return = 0
-        if not args.small_net:
-            cx = Variable(torch.zeros(1, 256), volatile=True)
-            hx = Variable(torch.zeros(1, 256), volatile=True)
         done = False
         while not done:
-            if args.small_net:
-                state = state.float()
-                state = state.view(1, env.observation_space.shape[0])
-                prob = model(Variable(state, volatile=True))
-            else:
-                prob, (hx, cx) = model(
-                    (Variable(state.unsqueeze(0), volatile=True),
-                     (hx, cx)))
+            prob, (hx, cx) = model(
+                (Variable(state.unsqueeze(0), volatile=True)))
 
             action = prob.max(1)[1].data.numpy()
             state, reward, done, _ = env.step(action[0, 0])
@@ -306,7 +296,6 @@ def train_loop(args, synced_model, env, chkpt_dir, virtual_batch=None):
         for p in processes:
             p.join()
         raw_results = [return_queue.get() for p in processes]
-        print(raw_results)
         seeds, results, num_frames, neg_list = [flatten(raw_results, index)
                                                 for index in [0, 1, 2, 3]]
         
