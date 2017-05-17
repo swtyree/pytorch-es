@@ -167,17 +167,17 @@ class Optimizer:
         for seed,neg,shaped_return in zip(random_seeds,neg_list,shaped_returns):
             consolidated_seeds[seed] = consolidated_seeds.get(seed,0.) + (-1)**neg*shaped_return
         total_change = sum([abs(v) for v in consolidated_seeds.values()])
-        print('total_change',total_change)
+        # print('total_change',total_change)
         rescale_factor = 1.0
         if total_change>0.0: rescale_factor = 1./total_change
-        print('rescale_factor',rescale_factor)
-        print(shaped_returns)
-        print(consolidated_seeds)
+        # print('rescale_factor',rescale_factor)
+        # print(shaped_returns)
+        # print(consolidated_seeds)
         
         # For each model, generate the same random numbers as we did
         # before, and update parameters. We apply weight decay once.
         for seed,weight in consolidated_seeds.items():
-            print(seed,weight,weight==0.0)
+            # print(seed,weight,weight==0.0)
             if weight == 0.0: continue
             np.random.seed(seed)
             for k, v in synced_model.es_params():
