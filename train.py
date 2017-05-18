@@ -34,7 +34,7 @@ def do_rollouts(args, models, random_seeds, return_queue, envs, are_negative, vi
         if args.gpu: model = model.cuda()
         if args.virtual_batch_norm:
             if args.gpu: virtual_batch = virtual_batch.cuda()
-            model.init_virtual_batch_norm(virtual_batch)
+            model.do_virtual_batch_norm(virtual_batch)
         state = env.reset()
         state = torch.from_numpy(state)
         this_model_return = 0
@@ -69,18 +69,21 @@ def perturb_model(args, model, random_seed, env):
     new_model.load_state_dict(model.state_dict())
     anti_model.load_state_dict(model.state_dict())
     np.random.seed(random_seed)
-    for (k, v), (anti_k, anti_v) in zip(new_model.es_params(),
-                                        anti_model.es_params()):
-        eps = np.random.normal(0, 1, v.size())
-        v += torch.from_numpy(args.sigma*eps).float()
-        anti_v += torch.from_numpy(args.sigma*-eps).float()
+    eps = args.sigma * np.random.normal(0.0, 1.0, size=model.count_parameters())
+    new_model.adjust_es_params(add=eps)
+    anti_model.adjust_es_params(add=-eps)
+    # for (k, v), (anti_k, anti_v) in zip(new_model.get_es_params(),
+    #                                     anti_model.get_es_params()):
+    #     eps = np.random.normal(0, 1, v.size())
+    #     v += torch.from_numpy(args.sigma*eps).float()
+    #     anti_v += torch.from_numpy(args.sigma*-eps).float()
     return [new_model, anti_model]
 
 
 class Optimizer:
     def __init__(self,args):
-        if args.beta:
-            self.updates = {}
+        if args.momentum:
+            self.prev_update = 0.0
     
     def gradient_update(self, args, synced_model, returns, random_seeds, neg_list,
                         num_eps, num_frames, chkpt_dir, unperturbed_results, start_time):
@@ -166,30 +169,30 @@ class Optimizer:
         consolidated_seeds = {}
         for seed,neg,shaped_return in zip(random_seeds,neg_list,shaped_returns):
             consolidated_seeds[seed] = consolidated_seeds.get(seed,0.) + (-1)**neg*shaped_return
-        total_change = sum([abs(v) for v in consolidated_seeds.values()])
-        # print('total_change',total_change)
-        rescale_factor = 1.0
-        # if total_change>0.0: rescale_factor = 1./total_change
-        # print('rescale_factor',rescale_factor)
-        # print(shaped_returns)
-        # print(consolidated_seeds)
+        consolidated_seeds = {seed:weight for seed,weight in consolidated_seeds.items() if abs(weight) > 0.0}
+        if not consolidated_seeds:
+            # TODO should we apply momentum and weight decay even without productive updates?
+            return synced_model
         
         # For each model, generate the same random numbers as we did
-        # before, and update parameters. We apply weight decay once.
+        # before, and update parameters.
+        weighted_eps_sum = 0.
         for seed,weight in consolidated_seeds.items():
             # print(seed,weight,weight==0.0)
             if weight == 0.0: continue
             np.random.seed(seed)
-            for k, v in synced_model.es_params():
-                eps = np.random.normal(0, 1, v.size())
-                update = args.lr/(args.n*args.sigma) * (weight * rescale_factor * eps)
-                if args.beta:
-                    update += args.beta*self.updates.get((i,k),0.0)
-                    self.updates[(i,k)] = update
-                v += torch.from_numpy(update).float()
-        for k, v in synced_model.es_params():
-            v *= args.wd
+            eps = args.sigma * np.random.normal(0.0, 1.0, size=synced_model.count_parameters())
+            weighted_eps_sum += weight * eps
+        
+        # Perform update
+        update = (args.n*args.sigma) * weighted_eps_sum
+        if args.momentum:
+            update += args.momentum * self.prev_update
+            self.prev_update = update
+        synced_model.adjust_es_params(multiply=args.weight_decay, add=update)
         args.lr *= args.lr_decay
+        
+        # Save model state
         torch.save(synced_model.state_dict(),
                    os.path.join(chkpt_dir, 'latest.pth'))
         return synced_model
@@ -223,7 +226,7 @@ def generate_seeds_and_models(args, synced_model, env):
     return random_seed, two_models
 
 
-def gather_for_virtual_batch_norm(env, batch_size=100, skip_steps=100, seed=409):
+def gather_for_virtual_batch_norm(env, batch_size=128, skip_steps=100, seed=409):
     """
     Gather a set of frames for virtual batch normalization.
     """

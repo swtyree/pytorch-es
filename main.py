@@ -14,19 +14,19 @@ from train import train_loop, render_env, gather_for_virtual_batch_norm, torchif
 parser = argparse.ArgumentParser(description='ES')
 parser.add_argument('--env-name', default='PongDeterministic-v3',
                     metavar='ENV', help='environment')
-parser.add_argument('--noop-init', type=int, default=0, metavar='N',
+parser.add_argument('--noop-init', type=int, default=30, metavar='N',
                     help='maximum number of random no-ops at start of episode')
-parser.add_argument('--lr', type=float, default=0.3, metavar='LR',
+parser.add_argument('--lr', type=float, default=0.5, metavar='LR',
                     help='learning rate')
-parser.add_argument('--beta', type=float, default=0.0, metavar='B',
+parser.add_argument('--momentum', type=float, default=0.9, metavar='B',
                     help='momentum rate')
 parser.add_argument('--lr-decay', type=float, default=1.0, metavar='LRD',
                     help='learning rate decay')
-parser.add_argument('--sigma', type=float, default=0.05, metavar='SD',
+parser.add_argument('--sigma', type=float, default=0.01, metavar='SD',
                     help='noise standard deviation')
-parser.add_argument('--wd', type=float, default=0.996, metavar='WD',
+parser.add_argument('--weight-decay', type=float, default=0.9, metavar='WD',
                     help='amount of weight decay')
-parser.add_argument('--n', type=int, default=40, metavar='N',
+parser.add_argument('--n', type=int, default=12, metavar='N',
                     help='batch size, must be even')
 parser.add_argument('--max-episode-length', type=int, default=100000,
                     metavar='MEL', help='maximum length of an episode')
@@ -34,14 +34,12 @@ parser.add_argument('--max-gradient-updates', type=int, default=100000,
                     metavar='MGU', help='maximum number of updates')
 parser.add_argument('--restore', default='', metavar='RES',
                     help='checkpoint from which to restore')
-parser.add_argument('--small-net', action='store_true',
-                    help='use simple MLP on CartPole')
 parser.add_argument('--a3c-net', action='store_true',
                     help='use A3C network')
 parser.add_argument('--stack-images', type=int, default=1, metavar='S',
                     help='input a stack of recent frames')
-parser.add_argument('--virtual-batch-norm', action='store_true',
-                    help='Use virtual batch normalization')
+parser.add_argument('--virtual-batch-norm', type=int, default=128, metavar='V',
+                    help='Use virtual batch normalization with V frames')
 parser.add_argument('--variable-ep-len', action='store_true',
                     help="change max episode length during training")
 parser.add_argument('--silent', action='store_true',
@@ -72,7 +70,7 @@ if __name__ == '__main__':
     
     if args.virtual_batch_norm:
         print('Computing batch for virtual batch normalization')
-        virtual_batch = gather_for_virtual_batch_norm(env)
+        virtual_batch = gather_for_virtual_batch_norm(env, batch_size=args.virtual_batch_norm)
         virtual_batch = torchify(virtual_batch, unsqueeze=False)
     else:
         virtual_batch = None

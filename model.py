@@ -65,7 +65,7 @@ class ES(torch.nn.Module):
             x = F.elu(self.bnfc1(self.fc1(x)))
             return F.softmax(self.bnfc2(self.fc2(x)))
                 
-    def init_virtual_batch_norm(self, batch):
+    def do_virtual_batch_norm(self, batch):
         if not self.use_virtual_batch_norm:
             raise Exception(
                 'Network was not constructed for virtual batch normalization.'
@@ -76,13 +76,20 @@ class ES(torch.nn.Module):
 
     def count_parameters(self):
         count = 0
-        for param in self.parameters():
-            count += param.data.numpy().flatten().shape[0]
+        for _,p in self.get_es_params():
+            count += p.data.numel()
         return count
 
-    def es_params(self):
+    def get_es_params(self):
         """
         The params that should be trained by ES (all of them)
         """
-        return [(k, v) for k, v in zip(self.state_dict().keys(),
-                                       self.state_dict().values())]
+        return [(k,p) for k,p in self.named_parameters()]
+    
+    def adjust_es_params(self, multiply=1., add=0.):
+        i = 0
+        for _,p in self.get_es_params():
+            n = p.data.numel()
+            p.data *= multiply
+            p.data += torch.from_numpy(add[i:i+n]).type(p.data.type())
+            i += n
