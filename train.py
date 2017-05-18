@@ -99,9 +99,6 @@ class Optimizer:
             return ranks
         
         def compute_centered_ranks(x):
-            """
-            Assume x is kx2 with a column for positive and a column for negative
-            """
             y = compute_ranks(x.ravel()).reshape(x.shape).astype(np.float32)
             y /= (x.size - 1)
             y -= .5
@@ -139,8 +136,10 @@ class Optimizer:
         assert len(random_seeds) == batch_size
         
         # Compute rank transform
-        shaped_returns = fitness_shaping(returns)
-        # shaped_returns2 = list(compute_centered_ranks(np.asarray(returns).reshape(-1,2)).flatten())
+        if args.alt_rank_trans:
+            shaped_returns = fitness_shaping(returns)
+        else:
+            shaped_returns = list(compute_centered_ranks(np.asarray(returns)))
         # for o in zip(returns,shaped_returns,shaped_returns2,random_seeds,neg_list):
             # print(o)
 

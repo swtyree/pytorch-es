@@ -36,6 +36,8 @@ parser.add_argument('--restore', default='', metavar='RES',
                     help='checkpoint from which to restore')
 parser.add_argument('--a3c-net', action='store_true',
                     help='use A3C network')
+parser.add_argument('--alt-rank-trans', action='store_true',
+                    help='use alternative rank transformation')
 parser.add_argument('--stack-images', type=int, default=1, metavar='S',
                     help='input a stack of recent frames')
 parser.add_argument('--virtual-batch-norm', type=int, default=128, metavar='V',
