@@ -12,7 +12,7 @@ from model import ES
 from train import train_loop, render_env, gather_for_virtual_batch_norm, torchify
 
 parser = argparse.ArgumentParser(description='ES')
-parser.add_argument('--env-name', default='PongDeterministic-v3',
+parser.add_argument('--env-name', default='Pong-v0',
                     metavar='ENV', help='environment')
 parser.add_argument('--noop-init', type=int, default=30, metavar='N',
                     help='maximum number of random no-ops at start of episode')
@@ -24,7 +24,7 @@ parser.add_argument('--lr-decay', type=float, default=1.0, metavar='LRD',
                     help='learning rate decay')
 parser.add_argument('--sigma', type=float, default=0.01, metavar='SD',
                     help='noise standard deviation')
-parser.add_argument('--weight-decay', type=float, default=0.9, metavar='WD',
+parser.add_argument('--weight-decay', type=float, default=0.99, metavar='WD',
                     help='amount of weight decay')
 parser.add_argument('--n', type=int, default=12, metavar='N',
                     help='batch size, must be even')

@@ -93,3 +93,6 @@ class ES(torch.nn.Module):
             p.data *= multiply
             p.data += torch.from_numpy(add[i:i+n]).type(p.data.type())
             i += n
+    
+    def get_param_norm(self):
+        return np.sqrt(sum([p.pow(2).sum().data.numpy() for _,p in self.get_es_params()])[0])

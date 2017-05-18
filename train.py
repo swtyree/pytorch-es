@@ -143,27 +143,6 @@ class Optimizer:
         # for o in zip(returns,shaped_returns,shaped_returns2,random_seeds,neg_list):
             # print(o)
 
-        # Print diagnostic info
-        rank_diag, rank = unperturbed_rank(returns, unperturbed_results)
-        if not args.silent:
-            print('Episode num: %d\n'
-                  'Elapsed time (sec): %.1f\n'
-                  'Average reward: %f\n'
-                  'Variance in rewards: %f\n'
-                  'Max reward: %f\n'
-                  'Min reward: %f\n'
-                  'Batch size: %d\n'
-                  'Max episode length: %d\n'
-                  'Sigma: %f\n'
-                  'Learning rate: %f\n'
-                  'Total num frames seen: %d\n'
-                  'Unperturbed reward: %f\n'
-                  'Unperturbed rank: %s\n\n' %
-                  (num_eps, time()-start_time, np.mean(returns), np.var(returns),
-                   max(returns), min(returns), batch_size,
-                   args.max_episode_length, args.sigma, args.lr, num_frames,
-                   unperturbed_results, rank_diag))
-        
         # Consolidate updates
         consolidated_seeds = {}
         for seed,neg,shaped_return in zip(random_seeds,neg_list,shaped_returns):
@@ -190,6 +169,28 @@ class Optimizer:
             self.prev_update = update
         synced_model.adjust_es_params(multiply=args.weight_decay, add=update)
         args.lr *= args.lr_decay
+        
+        # Print diagnostic info
+        rank_diag, rank = unperturbed_rank(returns, unperturbed_results)
+        if not args.silent:
+            print('Episode num: %d\n'
+                  'Elapsed time (sec): %.1f\n'
+                  'Average reward: %f\n'
+                  'Variance in rewards: %f\n'
+                  'Max reward: %f\n'
+                  'Min reward: %f\n'
+                  'Batch size: %d\n'
+                  'Max episode length: %d\n'
+                  'Sigma: %f\n'
+                  'Learning rate: %f\n'
+                  'Total num frames seen: %d\n'
+                  'Unperturbed reward: %f\n'
+                  'Unperturbed rank: %s\n'
+                  'New model norm: %f\n' %
+                  (num_eps, time()-start_time, np.mean(returns), np.var(returns),
+                   max(returns), min(returns), batch_size,
+                   args.max_episode_length, args.sigma, args.lr, num_frames,
+                   unperturbed_results, rank_diag, synced_model.get_param_norm()))
         
         # Save model state
         torch.save(synced_model.state_dict(),
