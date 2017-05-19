@@ -45,7 +45,6 @@ def do_rollouts(args, models, random_seeds, return_queue, envs, are_negative, vi
             this_model_return += reward
             this_model_num_frames += 1
             if done: 
-                print('DONE with model %d' % iii)
                 break
             state = torch.from_numpy(state)
         all_returns.append(this_model_return)
@@ -145,13 +144,13 @@ class Optimizer:
         for seed,neg,shaped_return in zip(random_seeds,neg_list,shaped_returns):
             consolidated_seeds[seed] = consolidated_seeds.get(seed,0.) + (-1)**neg*shaped_return
         consolidated_seeds = {seed:weight for seed,weight in consolidated_seeds.items() if abs(weight) > 0.0}
-        # if not consolidated_seeds:
+        if not consolidated_seeds:
             # TODO should we apply momentum and weight decay even without productive updates?
-            # return synced_model
+            return synced_model
         
         # For each model, generate the same random numbers as we did
         # before, and update parameters.
-        weighted_eps_sum = np.asarray(0.)
+        weighted_eps_sum = 0.
         for seed,weight in consolidated_seeds.items():
             # print(seed,weight,weight==0.0)
             if weight == 0.0: continue
@@ -164,7 +163,6 @@ class Optimizer:
         if args.momentum:
             update += args.momentum * self.prev_update
             self.prev_update = update
-        if np.size(update) == 1: update = None
         synced_model.adjust_es_params(multiply=args.weight_decay, add=update)
         args.lr *= args.lr_decay
         
