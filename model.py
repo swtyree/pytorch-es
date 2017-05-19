@@ -97,12 +97,14 @@ class ES(torch.nn.Module):
         """
         return [(k,p) for k,p in self.named_parameters()]
     
-    def adjust_es_params(self, multiply=1., add=0.):
+    def adjust_es_params(self, multiply=None, add=None):
         i = 0
         for _,p in self.get_es_params():
             n = p.data.numel()
-            p.data *= multiply
-            p.data += torch.from_numpy(add[i:i+n]).type(p.data.type())
+            if multiply is not None:
+                p.data *= multiply
+            if add is not None:
+                p.data += torch.from_numpy(add[i:i+n]).type(p.data.type())
             i += n
     
     def get_param_norm(self):

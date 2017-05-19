@@ -22,7 +22,7 @@ def do_rollouts(args, models, random_seeds, return_queue, envs, are_negative, vi
     """
     all_returns = []
     all_num_frames = []
-    for model,env in zip(models,envs):
+    for iii,(model,env) in enumerate(zip(models,envs)):
         if args.gpu: model = model.cuda()
         if args.virtual_batch_norm:
             if args.gpu: virtual_batch = virtual_batch.cuda()
@@ -37,11 +37,16 @@ def do_rollouts(args, models, random_seeds, return_queue, envs, are_negative, vi
             prob = model(Variable(state.unsqueeze(0), volatile=True))
 
             if args.gpu: prob = prob.cpu()
-            action = prob.max(1)[1].data.numpy()
-            state, reward, done, _ = env.step(action[0, 0])
+            if args.act_by_argmax:
+                action = prob.max(1)[1].data.numpy()[0, 0]
+            else:
+                action = torch.multinomial(prob).data.numpy()[0, 0]
+            state, reward, done, _ = env.step(action)
             this_model_return += reward
             this_model_num_frames += 1
-            if done: break
+            if done: 
+                print('DONE with model %d' % iii)
+                break
             state = torch.from_numpy(state)
         all_returns.append(this_model_return)
         all_num_frames.append(this_model_num_frames)
@@ -128,10 +133,10 @@ class Optimizer:
         assert len(random_seeds) == batch_size
         
         # Compute rank transform
-        if args.alt_rank_trans:
-            shaped_returns = fitness_shaping(returns)
-        else:
+        if args.alt_rank:
             shaped_returns = list(compute_centered_ranks(np.asarray(returns)))
+        else:
+            shaped_returns = fitness_shaping(returns)
         # for o in zip(returns,shaped_returns,shaped_returns2,random_seeds,neg_list):
             # print(o)
 
@@ -140,13 +145,13 @@ class Optimizer:
         for seed,neg,shaped_return in zip(random_seeds,neg_list,shaped_returns):
             consolidated_seeds[seed] = consolidated_seeds.get(seed,0.) + (-1)**neg*shaped_return
         consolidated_seeds = {seed:weight for seed,weight in consolidated_seeds.items() if abs(weight) > 0.0}
-        if not consolidated_seeds:
+        # if not consolidated_seeds:
             # TODO should we apply momentum and weight decay even without productive updates?
-            return synced_model
+            # return synced_model
         
         # For each model, generate the same random numbers as we did
         # before, and update parameters.
-        weighted_eps_sum = 0.
+        weighted_eps_sum = np.asarray(0.)
         for seed,weight in consolidated_seeds.items():
             # print(seed,weight,weight==0.0)
             if weight == 0.0: continue
@@ -159,6 +164,7 @@ class Optimizer:
         if args.momentum:
             update += args.momentum * self.prev_update
             self.prev_update = update
+        if np.size(update) == 1: update = None
         synced_model.adjust_es_params(multiply=args.weight_decay, add=update)
         args.lr *= args.lr_decay
         
@@ -302,8 +308,8 @@ def train_loop(args, synced_model, env, chkpt_dir, virtual_batch=None):
         _ = neg_list.pop(unperturbed_index)
         
         # Reorder results by seed and is_negative
-        sorted_results = sorted([a for a in zip(seeds,neg_list,results,num_frames)])
-        seeds, neg_list, results, num_frames = [[x[i] for x in sorted_results] for i in range(4)]
+        # sorted_results = sorted([a for a in zip(seeds,neg_list,results,num_frames)])
+        # seeds, neg_list, results, num_frames = [[x[i] for x in sorted_results] for i in range(4)]
 
         total_num_frames += sum(num_frames)
         num_eps += len(results)

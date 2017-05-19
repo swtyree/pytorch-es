@@ -36,7 +36,7 @@ parser.add_argument('--restore', default='', metavar='RES',
                     help='checkpoint from which to restore')
 parser.add_argument('--a3c-net', action='store_true',
                     help='use A3C network')
-parser.add_argument('--alt-rank-trans', action='store_true',
+parser.add_argument('--alt-rank', action='store_true',
                     help='use alternative rank transformation')
 parser.add_argument('--stack-images', type=int, default=1, metavar='S',
                     help='input a stack of recent frames')
@@ -44,6 +44,8 @@ parser.add_argument('--image-dim', type=int, default=84, metavar='D',
                     help='size of environment images after resizing (DxD)')
 parser.add_argument('--virtual-batch-norm', type=int, default=128, metavar='V',
                     help='Use virtual batch normalization with V frames')
+parser.add_argument('--act-by-argmax', action='store_true',
+                    help='act by argmax(prob) instead of sampling multinomial(prob)')
 parser.add_argument('--variable-ep-len', action='store_true',
                     help="change max episode length during training")
 parser.add_argument('--silent', action='store_true',
