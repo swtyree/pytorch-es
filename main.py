@@ -8,8 +8,8 @@ import argparse
 import torch
 
 from envs import create_atari_env
-from model import ES
-from train import train_loop, render_env, gather_for_virtual_batch_norm, torchify
+from model import ES, torchify
+from train import train_loop, render_env, gather_for_virtual_batch_norm
 
 parser = argparse.ArgumentParser(description='ES')
 parser.add_argument('--env-name', default='Pong-v0',
@@ -40,6 +40,8 @@ parser.add_argument('--alt-rank-trans', action='store_true',
                     help='use alternative rank transformation')
 parser.add_argument('--stack-images', type=int, default=1, metavar='S',
                     help='input a stack of recent frames')
+parser.add_argument('--image-dim', type=int, default=84, metavar='D',
+                    help='size of environment images after resizing (DxD)')
 parser.add_argument('--virtual-batch-norm', type=int, default=128, metavar='V',
                     help='Use virtual batch normalization with V frames')
 parser.add_argument('--variable-ep-len', action='store_true',
@@ -58,11 +60,11 @@ if __name__ == '__main__':
     args = parser.parse_args()
     assert args.n % 2 == 0
     
-    env = create_atari_env(args.env_name, frame_stack_size=args.stack_images, noop_init=args.noop_init)
+    env = create_atari_env(args.env_name, frame_stack_size=args.stack_images, noop_init=args.noop_init, image_dim=args.image_dim)
     chkpt_dir = 'checkpoints/%s/' % args.env_name
     if not os.path.exists(chkpt_dir):
         os.makedirs(chkpt_dir)
-    synced_model = ES(env.observation_space.shape[0], env.action_space,
+    synced_model = ES(env.observation_space, env.action_space,
         use_a3c_net=args.a3c_net, use_virtual_batch_norm=args.virtual_batch_norm)
     for param in synced_model.parameters():
         param.requires_grad = False

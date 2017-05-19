@@ -14,14 +14,6 @@ from envs import create_atari_env
 from model import ES
 
 
-def torchify(x, unsqueeze=True, gpu=False):
-    x = torch.from_numpy(x.astype('float32'))
-    if unsqueeze:
-        x = x.unsqueeze(0)
-    if gpu:
-        x = x.cuda()
-    return Variable(x, volatile=True)
-
 def do_rollouts(args, models, random_seeds, return_queue, envs, are_negative, virtual_batch):
     """
     For each model, do a rollout. Supports multiple models per thread but
@@ -62,9 +54,9 @@ def perturb_model(args, model, random_seed, env):
     as well as the negative perturbation, and returns both perturbed
     models.
     """
-    new_model = ES(env.observation_space.shape[0],env.action_space,
+    new_model = ES(env.observation_space,env.action_space,
                     use_a3c_net=args.a3c_net, use_virtual_batch_norm=args.virtual_batch_norm)
-    anti_model = ES(env.observation_space.shape[0],env.action_space,
+    anti_model = ES(env.observation_space,env.action_space,
                     use_a3c_net=args.a3c_net, use_virtual_batch_norm=args.virtual_batch_norm)
     new_model.load_state_dict(model.state_dict())
     anti_model.load_state_dict(model.state_dict())
@@ -251,7 +243,7 @@ def train_loop(args, synced_model, env, chkpt_dir, virtual_batch=None):
     num_eps = 0
     total_num_frames = 0
     opt = Optimizer(args)
-    init_envs = [create_atari_env(args.env_name, frame_stack_size=args.stack_images, noop_init=args.noop_init) 
+    init_envs = [create_atari_env(args.env_name, frame_stack_size=args.stack_images, noop_init=args.noop_init, image_dim=args.image_dim) 
                 for _ in range(args.n+1)]
     for _ in range(args.max_gradient_updates):
         start_time = time()

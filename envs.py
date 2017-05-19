@@ -12,12 +12,12 @@ import cv2
 
 
 # Taken from https://github.com/openai/universe-starter-agent
-def create_atari_env(env_id, frame_stack_size=1, noop_init=0):
+def create_atari_env(env_id, frame_stack_size=1, noop_init=0, image_dim=42):
     env = gym.make(env_id)
     if len(env.observation_space.shape) > 1:
         print('Preprocessing env')
         env = Vectorize(env)
-        env = AtariRescale42x42(env)
+        env = AtariRescale(env, dim=image_dim)
         env = NormalizedEnv(env)
         if frame_stack_size > 1:
             env = Stack(env, frame_stack_size=frame_stack_size)
@@ -29,28 +29,30 @@ def create_atari_env(env_id, frame_stack_size=1, noop_init=0):
     return env
 
 
-def _process_frame42(frame):
+def _process_frame(frame, dim=42):
     frame = frame[34:34 + 160, :160]
     # Resize by half, then down to 42x42 (essentially mipmapping). If
     # we resize directly we lose pixels that, when mapped to 42x42,
     # aren't close enough to the pixel boundary.
-    frame = cv2.resize(frame, (80, 80))
-    frame = cv2.resize(frame, (42, 42))
+    if dim < 80:
+        frame = cv2.resize(frame, (80, 80))
+    frame = cv2.resize(frame, (dim, dim))
     frame = frame.mean(2)
     frame = frame.astype(np.float32)
     frame *= (1.0 / 255.0)
-    frame = np.reshape(frame, [1, 42, 42])
+    frame = np.reshape(frame, [1, dim, dim])
     return frame
 
 
-class AtariRescale42x42(vectorized.ObservationWrapper):
+class AtariRescale(vectorized.ObservationWrapper):
 
-    def __init__(self, env=None):
-        super(AtariRescale42x42, self).__init__(env)
-        self.observation_space = Box(0.0, 1.0, [1, 42, 42])
+    def __init__(self, env=None, dim=42):
+        super(AtariRescale, self).__init__(env)
+        self.observation_space = Box(0.0, 1.0, [1, dim, dim])
+        self.dim = dim
 
     def _observation(self, observation_n):
-        return [_process_frame42(observation) for observation in observation_n]
+        return [_process_frame(observation, dim=self.dim) for observation in observation_n]
 
 
 class NormalizedEnv(vectorized.ObservationWrapper):
