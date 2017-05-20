@@ -169,24 +169,24 @@ class Optimizer:
         # Print diagnostic info
         rank_diag, rank = unperturbed_rank(returns, unperturbed_results)
         if not args.silent:
-            print('Episode num: %d\n'
-                  'Elapsed time (sec): %.1f\n'
-                  'Average reward: %f\n'
-                  'Variance in rewards: %f\n'
-                  'Max reward: %f\n'
-                  'Min reward: %f\n'
-                  'Batch size: %d\n'
-                  'Max episode length: %d\n'
-                  'Sigma: %f\n'
-                  'Learning rate: %f\n'
-                  'Total num frames seen: %d\n'
-                  'Unperturbed reward: %f\n'
-                  'Unperturbed rank: %s\n'
-                  'New model norm: %f\n' %
-                  (num_eps, time()-start_time, np.mean(returns), np.var(returns),
-                   max(returns), min(returns), batch_size,
-                   args.max_episode_length, args.sigma, args.lr, num_frames,
-                   unperturbed_results, rank_diag, synced_model.get_param_norm()))
+            print('\n'
+                  'Update: %d\n'
+                  'Time: %.2f sec\n'
+                  'Mean reward: %.3f (%.3f)\n'
+                  'Max reward: %.3f\n'
+                  'Median reward: %.3f\n'
+                  'Min reward: %.3f\n'
+                  'Model norm: %.3f:\n'
+                  'Gradient norm: %.3f\n'
+                  'Cumulative episodes: %d\n'
+                  'Cumulative frames: %d'
+                  %
+                  ( num_eps/batch_size, time()-start_time,
+                    np.mean(returns), np.var(returns),
+                    max(returns), np.median(returns), min(returns),
+                    synced_model.get_param_norm(), np.linalg.norm(update),
+                    num_eps, num_frames,
+                  ))
         
         # Save model state
         torch.save(synced_model.state_dict(),
@@ -243,7 +243,7 @@ def train_loop(args, synced_model, env, chkpt_dir, virtual_batch=None):
     def flatten(raw_results, index):
         notflat_results = [result[index] for result in raw_results]
         return [item for sublist in notflat_results for item in sublist]
-    print("Num params in network %d" % synced_model.count_parameters())
+    # print("Num params in network %d" % synced_model.count_parameters())
     num_eps = 0
     total_num_frames = 0
     opt = Optimizer(args)

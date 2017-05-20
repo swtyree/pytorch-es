@@ -13,9 +13,10 @@ import cv2
 
 # Taken from https://github.com/openai/universe-starter-agent
 def create_atari_env(env_id, frame_stack_size=1, noop_init=0, image_dim=42):
+    gym.logger.setLevel(gym.logging.WARN)
     env = gym.make(env_id)
     if len(env.observation_space.shape) > 1:
-        print('Preprocessing env')
+        # print('Preprocessing env')
         env = Vectorize(env)
         env = AtariRescale(env, dim=image_dim)
         env = NormalizedEnv(env)

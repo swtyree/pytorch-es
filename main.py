@@ -75,9 +75,9 @@ if __name__ == '__main__':
         synced_model.load_state_dict(state_dict)
     
     if args.virtual_batch_norm:
-        print('Computing batch for virtual batch normalization')
+        # print('Computing batch for virtual batch normalization')
         virtual_batch = gather_for_virtual_batch_norm(env, batch_size=args.virtual_batch_norm)
-        print(virtual_batch.shape)
+        # print(virtual_batch.shape)
         virtual_batch = torchify(virtual_batch, unsqueeze=False)
     else:
         virtual_batch = None
