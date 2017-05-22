@@ -201,7 +201,7 @@ def render_env(args, model, env):
         this_model_return = 0
         done = False
         while not done:
-            prob, (hx, cx) = model(
+            prob = model(
                 (Variable(state.unsqueeze(0), volatile=True)))
 
             action = prob.max(1)[1].data.numpy()

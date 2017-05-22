@@ -74,7 +74,7 @@ if __name__ == '__main__':
         state_dict = torch.load(args.restore)
         synced_model.load_state_dict(state_dict)
     
-    if args.virtual_batch_norm:
+    if args.virtual_batch_norm and not args.test:
         # print('Computing batch for virtual batch normalization')
         virtual_batch = gather_for_virtual_batch_norm(env, batch_size=args.virtual_batch_norm)
         # print(virtual_batch.shape)
