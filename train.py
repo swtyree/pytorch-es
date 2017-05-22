@@ -206,7 +206,6 @@ def render_env(args, model, env):
 
             action = prob.max(1)[1].data.numpy()
             state, reward, done, _ = env.step(action[0, 0])
-            env.render()
             this_model_return += reward
             state = torch.from_numpy(state)
         print('Reward: %f' % this_model_return)
