@@ -87,6 +87,11 @@ class Stack(vectorized.ObservationWrapper):
         super(Stack, self).__init__(env)
         self.frame_stack_size = frame_stack_size
         self.previous_stack = None
+        
+        high,low,shape = env.observation_space.high, env.observation_space.low, env.observation_space.shape
+        high = high.repeat(frame_stack_size,axis=0)
+        low = low.repeat(frame_stack_size,axis=0)
+        self.observation_space = Box(high,low)
     
     def _reset(self):
         self.previous_stack = None

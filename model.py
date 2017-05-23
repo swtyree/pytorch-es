@@ -66,7 +66,7 @@ class ES(torch.nn.Module):
         # initialize
         for m in self.modules():
             if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear) or \
-                    isinstance(m, nn.BatchNorm1d) or isinstance(m, nn.BatchNorm2d):
+            isinstance(m, nn.BatchNorm1d) or isinstance(m, nn.BatchNorm2d):
                 init.normal(m.weight.data, std=0.05)
                 m.bias.data.zero_()
         
