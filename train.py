@@ -81,7 +81,7 @@ class Optimizer:
         if args.momentum:
             self.prev_update = 0.0
     
-    def gradient_update(self, args, synced_model, returns, random_seeds, neg_list,
+    def gradient_update(self, args, synced_model, virtual_batch, returns, random_seeds, neg_list,
                         num_eps, num_frames, chkpt_dir, unperturbed_results, start_time):
         # from: https://github.com/openai/evolution-strategies-starter/blob/7585f01cc64890aefbbf3cccda326e2ca90ba6f8/es_distributed/es.py#L69
         def compute_ranks(x):
@@ -189,6 +189,7 @@ class Optimizer:
                   ))
         
         # Save model state
+        if args.virtual_batch_norm: synced_model.do_virtual_batch_norm(virtual_batch)
         torch.save(synced_model.state_dict(),
                    os.path.join(chkpt_dir, 'latest.pth'))
         return synced_model
@@ -310,7 +311,7 @@ def train_loop(args, synced_model, env, chkpt_dir, virtual_batch=None):
 
         total_num_frames += sum(num_frames)
         num_eps += len(results)
-        synced_model = opt.gradient_update(args, synced_model, results, seeds,
+        synced_model = opt.gradient_update(args, synced_model, virtual_batch, results, seeds,
                                        neg_list, num_eps, total_num_frames,
                                        chkpt_dir, unperturbed_results, start_time)
         if args.variable_ep_len:
