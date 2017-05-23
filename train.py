@@ -191,8 +191,8 @@ class Optimizer:
         # Save model state
         if args.virtual_batch_norm:
             if args.gpu:
-                virtual_batch = virtual_batch.cuda()
-                synced_model = synced_model.cuda()
+                virtual_batch = virtual_batch.cpu()
+                synced_model = synced_model.cpu()
             synced_model.do_virtual_batch_norm(virtual_batch)
         torch.save(synced_model.state_dict(),
                    os.path.join(chkpt_dir, 'latest.pth'))
