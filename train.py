@@ -76,6 +76,51 @@ def perturb_model(args, model, random_seed, env):
     return [new_model, anti_model]
 
 
+# from: https://github.com/openai/evolution-strategies-starter/blob/7585f01cc64890aefbbf3cccda326e2ca90ba6f8/es_distributed/es.py#L69
+def compute_ranks(x):
+    """
+    Returns ranks in [0, len(x))
+    Note: This is different from scipy.stats.rankdata, which returns ranks in [1, len(x)].
+    """
+    assert x.ndim == 1
+    ranks = np.empty(len(x), dtype=int)
+    ranks[x.argsort(kind='mergesort')] = np.arange(len(x))
+    return ranks
+
+def compute_centered_ranks(x):
+    y = compute_ranks(x.ravel()).reshape(x.shape).astype(np.float32)
+    y /= (x.size - 1)
+    y -= .5
+    return y
+
+def fitness_shaping(returns):
+    """
+    A rank transformation on the rewards, which reduces the chances
+    of falling into local optima early in training.
+    """
+    sorted_returns_backwards = sorted(returns)[::-1]
+    lamb = len(returns)
+    shaped_returns = []
+    denom = sum([max(0, math.log2(lamb/2 + 1) -
+                     math.log2(sorted_returns_backwards.index(r) + 1))
+                 for r in returns])
+    for r in returns:
+        num = max(0, math.log2(lamb/2 + 1) -
+                  math.log2(sorted_returns_backwards.index(r) + 1))
+        shaped_returns.append(num/denom + 1/lamb)
+    return shaped_returns
+
+def unperturbed_rank(returns, unperturbed_results):
+    nth_place = 1
+    for r in returns:
+        if r > unperturbed_results:
+            nth_place += 1
+    rank_diag = ('%d out of %d (1 means gradient '
+                 'is uninformative)' % (nth_place,
+                                         len(returns) + 1))
+    return rank_diag, nth_place
+
+
 class Optimizer:
     def __init__(self,args):
         if args.momentum:
@@ -83,50 +128,6 @@ class Optimizer:
     
     def gradient_update(self, args, synced_model, virtual_batch, returns, random_seeds, neg_list,
                         num_eps, num_frames, chkpt_dir, unperturbed_results, start_time):
-        # from: https://github.com/openai/evolution-strategies-starter/blob/7585f01cc64890aefbbf3cccda326e2ca90ba6f8/es_distributed/es.py#L69
-        def compute_ranks(x):
-            """
-            Returns ranks in [0, len(x))
-            Note: This is different from scipy.stats.rankdata, which returns ranks in [1, len(x)].
-            """
-            assert x.ndim == 1
-            ranks = np.empty(len(x), dtype=int)
-            ranks[x.argsort(kind='mergesort')] = np.arange(len(x))
-            return ranks
-        
-        def compute_centered_ranks(x):
-            y = compute_ranks(x.ravel()).reshape(x.shape).astype(np.float32)
-            y /= (x.size - 1)
-            y -= .5
-            return y
-        
-        def fitness_shaping(returns):
-            """
-            A rank transformation on the rewards, which reduces the chances
-            of falling into local optima early in training.
-            """
-            sorted_returns_backwards = sorted(returns)[::-1]
-            lamb = len(returns)
-            shaped_returns = []
-            denom = sum([max(0, math.log2(lamb/2 + 1) -
-                             math.log2(sorted_returns_backwards.index(r) + 1))
-                         for r in returns])
-            for r in returns:
-                num = max(0, math.log2(lamb/2 + 1) -
-                          math.log2(sorted_returns_backwards.index(r) + 1))
-                shaped_returns.append(num/denom + 1/lamb)
-            return shaped_returns
-
-        def unperturbed_rank(returns, unperturbed_results):
-            nth_place = 1
-            for r in returns:
-                if r > unperturbed_results:
-                    nth_place += 1
-            rank_diag = ('%d out of %d (1 means gradient '
-                         'is uninformative)' % (nth_place,
-                                                 len(returns) + 1))
-            return rank_diag, nth_place
-
         batch_size = len(returns)
         assert batch_size == args.n
         assert len(random_seeds) == batch_size
@@ -136,8 +137,6 @@ class Optimizer:
             shaped_returns = list(compute_centered_ranks(np.asarray(returns)))
         else:
             shaped_returns = fitness_shaping(returns)
-        # for o in zip(returns,shaped_returns,shaped_returns2,random_seeds,neg_list):
-            # print(o)
 
         # Consolidate updates
         consolidated_seeds = {}
@@ -167,6 +166,7 @@ class Optimizer:
         args.lr *= args.lr_decay
         
         # Print diagnostic info
+        rewards = [reward for reward,length in returns]
         rank_diag, rank = unperturbed_rank(returns, unperturbed_results)
         if not args.silent:
             print('\n'
@@ -182,8 +182,8 @@ class Optimizer:
                   'Cumulative frames: %d'
                   %
                   ( num_eps/batch_size, time()-start_time,
-                    np.mean(returns), np.var(returns),
-                    max(returns), np.median(returns), min(returns),
+                    np.mean(rewards), np.var(rewards),
+                    max(rewards), np.median(rewards), min(rewards),
                     synced_model.get_param_norm(), np.linalg.norm(update),
                     num_eps, num_frames,
                   ))
@@ -299,13 +299,14 @@ def train_loop(args, synced_model, env, chkpt_dir, virtual_batch=None):
         for p in processes:
             p.join()
         raw_results = [return_queue.get() for p in processes]
-        seeds, results, num_frames, neg_list = [flatten(raw_results, index)
+        seeds, rewards, num_frames, neg_list = [flatten(raw_results, index)
                                                 for index in [0, 1, 2, 3]]
+        returns = [x for x in zip(rewards,num_frames)]
         
         # Separate the unperturbed results from the perturbed results
         _ = unperturbed_index = seeds.index('dummy_seed')
         seeds.pop(unperturbed_index)
-        unperturbed_results = results.pop(unperturbed_index)
+        unperturbed_results = returns.pop(unperturbed_index)
         _ = num_frames.pop(unperturbed_index)
         _ = neg_list.pop(unperturbed_index)
         
@@ -314,8 +315,8 @@ def train_loop(args, synced_model, env, chkpt_dir, virtual_batch=None):
         # seeds, neg_list, results, num_frames = [[x[i] for x in sorted_results] for i in range(4)]
 
         total_num_frames += sum(num_frames)
-        num_eps += len(results)
-        synced_model = opt.gradient_update(args, synced_model, virtual_batch, results, seeds,
+        num_eps += len(returns)
+        synced_model = opt.gradient_update(args, synced_model, virtual_batch, returns, seeds,
                                        neg_list, num_eps, total_num_frames,
                                        chkpt_dir, unperturbed_results, start_time)
         if args.variable_ep_len:

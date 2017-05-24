@@ -24,7 +24,7 @@ parser.add_argument('--lr-decay', type=float, default=1.0, metavar='LRD',
                     help='learning rate decay')
 parser.add_argument('--sigma', type=float, default=0.01, metavar='SD',
                     help='noise standard deviation')
-parser.add_argument('--weight-decay', type=float, default=0.99, metavar='WD',
+parser.add_argument('--weight-decay', type=float, default=0.9, metavar='WD',
                     help='amount of weight decay')
 parser.add_argument('--n', type=int, default=12, metavar='N',
                     help='batch size, must be even')
@@ -38,7 +38,7 @@ parser.add_argument('--a3c-net', action='store_true',
                     help='use A3C network')
 parser.add_argument('--alt-rank', action='store_true',
                     help='use alternative rank transformation')
-parser.add_argument('--stack-images', type=int, default=1, metavar='S',
+parser.add_argument('--stack-images', type=int, default=4, metavar='S',
                     help='input a stack of recent frames')
 parser.add_argument('--image-dim', type=int, default=84, metavar='D',
                     help='size of environment images after resizing (DxD)')
