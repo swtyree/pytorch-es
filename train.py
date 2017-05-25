@@ -14,7 +14,7 @@ from envs import create_atari_env
 from model import ES
 
 
-def do_rollouts(args, models, random_seeds, return_queue, envs, are_negative, virtual_batch):
+def do_rollouts(args, models, random_seeds, return_queue, envs, are_negative, virtual_batch, matching_env_seed=False):
     """
     For each model, do a rollout. Supports multiple models per thread but
     don't do it -- it's inefficient (it's mostly a relic of when I would run
@@ -27,6 +27,7 @@ def do_rollouts(args, models, random_seeds, return_queue, envs, are_negative, vi
         if args.virtual_batch_norm:
             if args.gpu: virtual_batch = virtual_batch.cuda()
             model.do_virtual_batch_norm(virtual_batch)
+        if matching_env_seed: env.seed(matching_env_seed)
         state = env.reset()
         state = torch.from_numpy(state)
         this_model_return = 0
@@ -167,7 +168,7 @@ class Optimizer:
         
         # Print diagnostic info
         rewards = [reward for reward,length in returns]
-        rank_diag, rank = unperturbed_rank(returns, unperturbed_results)
+        # rank_diag, rank = unperturbed_rank(returns, unperturbed_results)
         if not args.silent:
             print('\n'
                   'Update: %d\n'
@@ -226,7 +227,7 @@ def generate_seeds_and_models(args, synced_model, env):
     return random_seed, two_models
 
 
-def gather_for_virtual_batch_norm(env, batch_size=128, skip_steps=100, seed=409):
+def gather_for_virtual_batch_norm(env, batch_size=128, skip_steps=10, seed=409):
     """
     Gather a set of frames for virtual batch normalization.
     """
@@ -242,28 +243,39 @@ def gather_for_virtual_batch_norm(env, batch_size=128, skip_steps=100, seed=409)
         virtual_batch += [state]
     return np.stack(virtual_batch)
 
+def flatten(raw_results, index):
+    notflat_results = [result[index] for result in raw_results]
+    return [item for sublist in notflat_results for item in sublist]
 
 def train_loop(args, synced_model, env, chkpt_dir, virtual_batch=None):
-    def flatten(raw_results, index):
-        notflat_results = [result[index] for result in raw_results]
-        return [item for sublist in notflat_results for item in sublist]
-    # print("Num params in network %d" % synced_model.count_parameters())
+    # init stats
     num_eps = 0
     total_num_frames = 0
+    
+    # init optimizer
     opt = Optimizer(args)
+    
+    # init an environment for every process
     init_envs = [create_atari_env(args.env_name, frame_stack_size=args.stack_images, noop_init=args.noop_init, image_dim=args.image_dim) 
                 for _ in range(args.n+1)]
-    for _ in range(args.max_gradient_updates):
+    
+    # train
+    for iteration in range(args.max_gradient_updates):
+        # init
         start_time = time()
         processes = []
         return_queue = mp.Queue()
         all_seeds, all_models, all_are_negative, all_envs = [], [], [], []
-        # Generate a perturbation and its antithesis
+        
+        # set a matching environment seed
+        if args.match_env_seeds:
+            env_seed = iteration
+        else:
+            env_seed = False
+        
+        # generate perturbations on the synced model
         for j in range(int(args.n/2)):
-            random_seed, two_models = generate_seeds_and_models(args,
-                                                                synced_model,
-                                                                env)
-            # Add twice because we get two models with the same seed
+            random_seed, two_models = generate_seeds_and_models(args,synced_model,env)
             all_seeds.append(random_seed)
             all_seeds.append(random_seed)
             all_models += two_models
@@ -272,52 +284,50 @@ def train_loop(args, synced_model, env, chkpt_dir, virtual_batch=None):
             all_envs.append(init_envs[j*2+1])
         assert len(all_seeds) == len(all_models)
         
-        # Add all peturbed models to the queue
+        # add all peturbed models to the queue
         while all_models:
+            # get model/seed/env from the queue
             perturbed_models = [all_models.pop() for _ in range(args.models_per_thread)]
             seeds = [all_seeds.pop() for _ in range(args.models_per_thread)]
             envs = [all_envs.pop() for _ in range(args.models_per_thread)]
             are_negative = [all_are_negative.pop() for _ in range(args.models_per_thread)]
-            p = mp.Process(target=do_rollouts, args=(args,
-                                                     perturbed_models,
-                                                     seeds,
-                                                     return_queue,
-                                                     envs,
-                                                     are_negative,
-                                                     virtual_batch))
+            
+            # start process
+            p = mp.Process(target=do_rollouts, 
+                    args=(args,perturbed_models,seeds,return_queue,envs,are_negative,virtual_batch,env_seed))
             p.start()
             processes.append(p)
         assert len(all_seeds) == 0
-        # Evaluate the unperturbed model as well
-        p = mp.Process(target=do_rollouts, args=(args, [synced_model],
-                                                 ['dummy_seed'],
-                                                 return_queue, envs[-1:],
-                                                 ['dummy_neg'],
-                                                 virtual_batch))
-        p.start()
-        processes.append(p)
-        for p in processes:
-            p.join()
+        
+        # evaluate the unperturbed model too
+        # p = mp.Process(target=do_rollouts,
+        #         args=(args,[synced_model],['dummy_seed'],return_queue,envs[-1:],['dummy_neg'],virtual_batch,env_seed))
+        # p.start()
+        # processes.append(p)
+        
+        # wait for processes to finish
+        for p in processes: p.join()
         raw_results = [return_queue.get() for p in processes]
-        seeds, rewards, num_frames, neg_list = [flatten(raw_results, index)
-                                                for index in [0, 1, 2, 3]]
+        seeds, rewards, num_frames, neg_list = [flatten(raw_results, index) for index in [0, 1, 2, 3]]
         returns = [x for x in zip(rewards,num_frames)]
         
         # Separate the unperturbed results from the perturbed results
-        _ = unperturbed_index = seeds.index('dummy_seed')
-        seeds.pop(unperturbed_index)
-        unperturbed_results = returns.pop(unperturbed_index)
-        _ = num_frames.pop(unperturbed_index)
-        _ = neg_list.pop(unperturbed_index)
+        # _ = unperturbed_index = seeds.index('dummy_seed')
+        # seeds.pop(unperturbed_index)
+        # unperturbed_results = returns.pop(unperturbed_index)
+        # _ = num_frames.pop(unperturbed_index)
+        # _ = neg_list.pop(unperturbed_index)
+        unperturbed_results = None
         
-        # Reorder results by seed and is_negative
-        # sorted_results = sorted([a for a in zip(seeds,neg_list,results,num_frames)])
-        # seeds, neg_list, results, num_frames = [[x[i] for x in sorted_results] for i in range(4)]
-
+        # update stats
         total_num_frames += sum(num_frames)
         num_eps += len(returns)
+        
+        # perform model update
         synced_model = opt.gradient_update(args, synced_model, virtual_batch, returns, seeds,
                                        neg_list, num_eps, total_num_frames,
                                        chkpt_dir, unperturbed_results, start_time)
+        
+        # update variable episode length
         if args.variable_ep_len:
             args.max_episode_length = int(2*sum(num_frames)/len(num_frames))

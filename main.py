@@ -1,10 +1,8 @@
 from __future__ import absolute_import, division, print_function
 
 import numpy as np
-
 import os
 import argparse
-
 import torch
 
 from envs import create_atari_env
@@ -32,8 +30,10 @@ parser.add_argument('--max-episode-length', type=int, default=100000,
                     metavar='MEL', help='maximum length of an episode')
 parser.add_argument('--max-gradient-updates', type=int, default=100000,
                     metavar='MGU', help='maximum number of updates')
+parser.add_argument('--checkpoint-dir', default='', metavar='RES',
+                    help='checkpoint to save to or restore from')
 parser.add_argument('--restore', default='', metavar='RES',
-                    help='checkpoint from which to restore')
+                    help='restore from checkpoint')
 parser.add_argument('--a3c-net', action='store_true',
                     help='use A3C network')
 parser.add_argument('--alt-rank', action='store_true',
@@ -56,16 +56,27 @@ parser.add_argument('--gpu', action='store_true',
                     help='use GPU')
 parser.add_argument('--models-per-thread', type=int, default=1, metavar='M',
                     help='models evaluated by each thread')
+parser.add_argument('--match-env-seeds', action='store_true',
+                    help='match seeds among environments during a training iteration')
 
 
 if __name__ == '__main__':
+    # parse args
     args = parser.parse_args()
     assert args.n % 2 == 0
     
+    # instantiate environment
     env = create_atari_env(args.env_name, frame_stack_size=args.stack_images, noop_init=args.noop_init, image_dim=args.image_dim)
-    chkpt_dir = 'checkpoints/%s/' % args.env_name
+    
+    # set checkpoint directory
+    if args.checkpoint_dir:
+        chkpt_dir = args.checkpoint_dir
+    else:
+        chkpt_dir = 'checkpoints/%s/' % args.env_name
     if not os.path.exists(chkpt_dir):
         os.makedirs(chkpt_dir)
+    
+    # instantiate model (and restore if needed)
     synced_model = ES(env.observation_space, env.action_space,
         use_a3c_net=args.a3c_net, use_virtual_batch_norm=args.virtual_batch_norm)
     for param in synced_model.parameters():
@@ -74,13 +85,15 @@ if __name__ == '__main__':
         state_dict = torch.load(args.restore)
         synced_model.load_state_dict(state_dict)
     
+    # compute batch for virtual batch normalization
     if args.virtual_batch_norm and not args.test:
         # print('Computing batch for virtual batch normalization')
         virtual_batch = gather_for_virtual_batch_norm(env, batch_size=args.virtual_batch_norm)
         virtual_batch = torchify(virtual_batch, unsqueeze=False)
     else:
         virtual_batch = None
-
+    
+    # train or test as requested
     if args.test:
         render_env(args, synced_model, env)
     else:

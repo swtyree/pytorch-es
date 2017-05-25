@@ -106,7 +106,7 @@ class ES(torch.nn.Module):
         """
         The params that should be trained by ES (all of them)
         """
-        return [(k,p) for k,p in self.named_parameters()]
+        return sorted([(k,p) for k,p in self.named_parameters()])
     
     def adjust_es_params(self, multiply=None, add=None):
         i = 0

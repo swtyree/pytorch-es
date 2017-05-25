@@ -109,10 +109,16 @@ class NoopInit(vectorized.ObservationWrapper):
     def __init__(self, env=None, max_n_noops=30):
         super(NoopInit, self).__init__(env)
         self.max_n_noops = max_n_noops
+        self.rng = np.random.RandomState()
+    
+    def _seed(self, seed=None):
+        parent_seeds = super(NoopInit, self)._seed(seed)
+        self.rng.seed(parent_seeds[0])
+        return parent_seeds
     
     def _reset(self):
         state = super(NoopInit, self)._reset()
-        for _ in range(np.random.randint(self.max_n_noops+1)):
+        for _ in range(self.rng.randint(self.max_n_noops+1)):
             state,_,_,_ = self.step([0])
         return state
     
